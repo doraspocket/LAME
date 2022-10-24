@@ -1,2 +1,0 @@
-# LAME
-LAME MP3

@@ -1,5 +1,4 @@
 lame_init
-lame_init_old
 lame_set_num_samples
 lame_get_num_samples
 lame_set_in_samplerate
@@ -184,6 +183,7 @@ lame_get_lametag_frame
 lame_close
 lame_encode_finish
 hip_decode_init
+hip_decode_init_gapless
 hip_decode_exit
 hip_set_errorf
 hip_set_debugf

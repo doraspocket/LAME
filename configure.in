@@ -1,4 +1,4 @@
-dnl $Id: configure.in,v 1.148 2017/08/15 15:16:31 aleidinger Exp $
+dnl $Id$
 dnl
 dnl
 dnl don't forget to set ASM_FOR_ARCH to a space delimited list of
@@ -17,8 +17,11 @@ dnl FRONTEND_LDFLAGS
 dnl FRONTEND_CFLAGS
 dnl FRONTEND_LDADD
 
+dnl extra vars for libmp3lame:
+dnl LIBMP3LAME_LDADD
+
 AC_PREREQ(2.69)
-AC_INIT([lame],[3.100],[lame-dev@lists.sf.net])
+AC_INIT([lame],[3.101],[lame-dev@lists.sf.net])
 AC_CONFIG_SRCDIR([libmp3lame/lame.c])
 AC_LANG([C])
 
@@ -35,6 +38,7 @@ AH_TOP([
 AH_BOTTOM([#endif /* LAME_CONFIG_H */])
 AM_MAINTAINER_MODE
 AM_MAKE_INCLUDE
+PKG_PROG_PKG_CONFIG([])
 
 dnl check environment
 AC_AIX
@@ -96,7 +100,7 @@ if test "x${GCC}" = "xyes"; then
 		AC_MSG_CHECKING(version of GCC)
 		GCC_version="`${CC} --version | sed -n '1s/^[[^ ]]* (.*) //;s/ .*$//;1p'`"
 		case "${GCC_version}" in 
-		[0-9]*[0-9]*)
+		[[0-9]]*[[0-9]]*)
 			AC_MSG_RESULT(${GCC_version})
 			;;
 		*)
@@ -411,8 +415,20 @@ MAKEDEP="-M"
 RM_F="rm -f"
 
 AC_ARG_ENABLE(nasm,
-  [  --enable-nasm              Allow the use of nasm if available],
+  [  --enable-nasm           Allow the use of nasm if available],
   ASM_FOR_ARCH="i386", ASM_FOR_ARCH="")
+
+AC_ARG_ENABLE(ieeehack,
+  [  --enable-ieeehack       Enable Takhiros IEEE754 hack (speed improvement for old CPUs)],
+  IEEE754_HACK="yes", IEEE754_HACK="no")
+case ${IEEE754_HACK} in
+	yes)
+		AC_DEFINE(TAKEHIRO_IEEE754_HACK, 1, IEEE754 compatible machine)
+		;;
+	no)
+		AC_DEFINE(TAKEHIRO_IEEE754_HACK, 0, IEEE754 compatible machine)
+		;;
+esac
 
 dnl Checks for libraries.
 
@@ -421,6 +437,7 @@ AC_CHECK_HEADERS(ncurses/termcap.h)
 AC_CHECK_LIB(termcap, initscr, HAVE_TERMCAP="termcap")
 AC_CHECK_LIB(curses, initscr, HAVE_TERMCAP="curses")
 AC_CHECK_LIB(ncurses, initscr, HAVE_TERMCAP="ncurses")
+AC_CHECK_HEADERS(langinfo.h, AC_CHECK_FUNCS(nl_langinfo))
 
 AM_ICONV
 
@@ -430,7 +447,7 @@ dnl free fast math library
 AC_CHECK_LIB(ffm, cos, USE_LIBM="-lffm -lm")
 dnl Compaq fast math library.
 AC_ARG_ENABLE(cpml,
-  [  --disable-cpml              Do not use Compaq's fast Math Library],
+  [  --disable-cpml          Do not use Compaq's fast Math Library],
   CONFIG_CPML="no", CONFIG_CPML="yes")
 if test "${CONFIG_CPML}" = yes; then
       AC_CHECK_LIB(cpml, cos, USE_LIBM="-lcpml")
@@ -444,7 +461,7 @@ AM_PATH_GTK(1.2.0, HAVE_GTK="yes", HAVE_GTK="no")
 dnl ElectricFence malloc debugging
 AC_MSG_CHECKING(use of ElectricFence malloc debugging)
 AC_ARG_ENABLE(efence,
-  [  --enable-efence            Use ElectricFence for malloc debugging],
+  [  --enable-efence         Use ElectricFence for malloc debugging],
   CONFIG_EFENCE="${enableval}", CONFIG_EFENCE="no")
 
 case "${CONFIG_EFENCE}" in
@@ -470,9 +487,9 @@ esac
 dnl libsndfile
 WARNING=
 AC_ARG_WITH(fileio,
-  [  --with-fileio=lame         Use lame's internal file io routines [default]]
-  [             =sndfile      Use Erik de Castro Lopo's libsndfile]
-  [                           (no stdin possible currently)],
+  [  --with-fileio=lame      Use lame's internal file io routines [default]]
+  [             =sndfile   Use Erik de Castro Lopo's libsndfile]
+  [                        (no stdin possible currently)],
   CONFIG_FILEIO="${withval}", CONFIG_FILEIO="lame")
 
 if test "${CONFIG_FILEIO}" = "sndfile" ; then
@@ -515,7 +532,7 @@ dnl check if we should remove hooks for analyzer code in library
 dnl default library must include these hooks
 AC_MSG_CHECKING(use of analyzer hooks)
 AC_ARG_ENABLE(analyzer-hooks,
-  [  --disable-analyzer-hooks   Exclude analyzer hooks],
+  [  --disable-analyzer-hooks Exclude analyzer hooks],
   CONFIG_ANALYZER="${enableval}", CONFIG_ANALYZER="yes")
 
 case "${CONFIG_ANALYZER}" in
@@ -532,24 +549,33 @@ AC_MSG_RESULT($CONFIG_ANALYZER)
 
 
 dnl mpg123 decoder
-AC_MSG_CHECKING(use of mpg123 decoder)
+PKG_CHECK_MODULES([mpg123], [libmpg123 >= 1.26.0], [HAVE_MPG123="yes"], [HAVE_MPG123="no"])
+
+AC_MSG_CHECKING(use of external mpg123 decoder)
 AC_ARG_ENABLE(decoder,
   [  --disable-decoder          Exclude mpg123 decoder],
   CONFIG_DECODER="${enableval}", CONFIG_DECODER="yes")
 
-AM_CONDITIONAL(LIB_WITH_DECODER, test "x${CONFIG_DECODER}" = "xyes")
-
-if test "${CONFIG_DECODER}" != "no" ; then
-	CONFIG_DECODER="yes (Layer 1, 2, 3)"
-	AC_DEFINE(HAVE_MPGLIB, 1, build with mpglib support)
+LIB_WITH_DECODER=false
+if test "${HAVE_MPG123}" = "yes" && test "${CONFIG_DECODER}" != "no"; then
+	AC_MSG_RESULT([yes])
+	AC_DEFINE(HAVE_MPG123, 1, set to 1 if you have libmpg123)
 	AC_DEFINE(DECODE_ON_THE_FLY, 1, allow to compute a more accurate replaygain value)
+	FRONTEND_LDADD="$mpg123_LIBS $FRONTEND_LDADD"
+	LIBMP3LAME_LDADD="$mpg123_LIBS $LIBMP3LAME_LDADD"
+	INCLUDES="$mpg123_CFLAGS $INCLUDES"
+else
+	if test "${CONFIG_DECODER}" = "yes" ; then
+		AC_MSG_ERROR([no, libmpg123 not found])
+	else
+		AC_MSG_RESULT(${CONFIG_DECODER})
+	fi
 fi
-AC_MSG_RESULT($CONFIG_DECODER)
-
+AM_CONDITIONAL(LIB_WITH_DECODER, ${LIB_WITH_DECODER})
 
 AC_MSG_CHECKING(if the lame frontend should be build)
 AC_ARG_ENABLE(frontend,
-  [  --disable-frontend         Do not build the lame executable [default=build]],
+  [  --disable-frontend      Do not build the lame executable [default=build]],
     WITH_FRONTEND="${enableval}", WITH_FRONTEND=yes)
 if test "x${WITH_FRONTEND}" = "xyes"; then
 	WITH_FRONTEND=lame${ac_exeext}
@@ -563,7 +589,7 @@ fi
 
 AC_MSG_CHECKING(if mp3x is requested)
 AC_ARG_ENABLE(mp3x,
-  [  --enable-mp3x              Build GTK frame analyzer [default=no]],
+  [  --enable-mp3x           Build GTK frame analyzer [default=no]],
     WITH_MP3X="${enableval}", WITH_MP3X=no)
 if test "x${WITH_MP3X}" = "xyes"; then
 	WITH_MP3X=mp3x${ac_exeext}
@@ -586,7 +612,7 @@ fi
 
 AC_MSG_CHECKING(if mp3rtp is requested)
 AC_ARG_ENABLE(mp3rtp,
-  [  --enable-mp3rtp            Build mp3rtp [default=no]],
+  [  --enable-mp3rtp         Build mp3rtp [default=no]],
     WITH_MP3RTP="${enableval}", WITH_MP3RTP=no)
 if test "x${WITH_MP3RTP}" = "xyes"; then
 	if test ${SOCKETFUNCTION} = NO; then
@@ -686,9 +712,7 @@ x86_64|amd64)
 		WITH_VECTOR=yes
 	fi
 
-	AC_DEFINE(TAKEHIRO_IEEE754_HACK, 1, IEEE754 compatible machine)
-	AC_DEFINE(USE_FAST_LOG, 1, faster log implementation with less but enoug
-h precission)
+	AC_DEFINE(USE_FAST_LOG, 1, faster log implementation with less but enough precission)
 	;;
 *86)
 	CPUTYPE="i386"
@@ -697,15 +721,10 @@ h precission)
 		WITH_VECTOR=yes
 	fi
 
-	# use internal knowledge of the IEEE 754 layout
-	AC_DEFINE(TAKEHIRO_IEEE754_HACK, 1, IEEE754 compatible machine)
 	AC_DEFINE(USE_FAST_LOG, 1, faster log implementation with less but enough precission)
 	;;
 powerpc)
 	CPUTYPE="no"
-
-	# use internal knowledge of the IEEE 754 layout
-	AC_DEFINE(TAKEHIRO_IEEE754_HACK, 1, IEEE754 compatible machine)
 
 	# The following should not get enabled on a G5. HOWTO check for a G5?
 	AC_DEFINE(USE_FAST_LOG, 1, faster log implementation with less but enough precission)
@@ -764,6 +783,9 @@ case $host_os in
 	*darwin*)
 		NASM_FORMAT="-f macho"
 		;;
+	*os2-emx*)
+		NASM_FORMAT="-f aout -DAOUT"
+		;;
 	*)
 		CYGWIN=no
 		NASM_FORMAT="-f elf"
@@ -778,8 +800,8 @@ esac
 #
 AC_MSG_CHECKING(for additional optimizations)
 AC_ARG_ENABLE(expopt,
-  [  --enable-expopt=full,norm  Whether to enable experimental optimizations]
-  [                           [default=no]],
+  [  --enable-expopt=full,norm Whether to enable experimental optimizations]
+  [                          [default=no]],
     CONFIG_EXPOPT="${enableval}", CONFIG_EXPOPT="no")
 
 if test "x$HAVE_GCC" = "xyes" -o "x$HAVE_CLANG" = "xyes"; then
@@ -825,7 +847,7 @@ if test "x$HAVE_GCC" = "xyes" -o "x$HAVE_CLANG" = "xyes"; then
 			OPTIMIZATION_FULL="-fmove-all-movables -freduce-all-givs \
 				-fbranch-count-reg -fforce-addr -fforce-mem"
 			;;
-		[456789].*)
+		[[456789]].*|1[[0-9]].*)
 			OPTIMIZATION="-O3 -fomit-frame-pointer -ffast-math"
 			OPTIMIZATION_FULL="-fbranch-count-reg -fforce-addr"
 			;;
@@ -848,7 +870,7 @@ if test "x$HAVE_GCC" = "xyes" -o "x$HAVE_CLANG" = "xyes"; then
 		case "${GCC_version}" in
 		3.0*)
 			;;
-		[3456789].*)
+		[[3456789]].*|1[[0-9]].*)
 			# doesn't work on 3.0.x, but on 3.[12] and
 			# hopefully on every other release after that too
 			if test -x /usr/bin/isalist; then
@@ -863,7 +885,7 @@ if test "x$HAVE_GCC" = "xyes" -o "x$HAVE_CLANG" = "xyes"; then
 		;;
 	*86)
 		case "${GCC_version}" in
-		[3456789].*)
+		[[3456789]].*|1[[0-9]].*)
 			OPTIMIZATION="${OPTIMIZATION} \
 				-maccumulate-outgoing-args"
 			;;
@@ -921,7 +943,7 @@ if test "x$HAVE_GCC" = "xyes" -o "x$HAVE_CLANG" = "xyes"; then
 					;;
 				esac
 				;;
-			[456789].*)
+			[[456789]].*|1[[0-9]].*)
 				case ${host_cpu} in
 				*486)
 					OPTIMIZATION="${OPTIMIZATION} -march=i486"
@@ -932,10 +954,6 @@ if test "x$HAVE_GCC" = "xyes" -o "x$HAVE_CLANG" = "xyes"; then
 					;;
 				*686)
 					OPTIMIZATION="${OPTIMIZATION} -march=i686 \
-						-mtune=native"
-					;;
-				*86)
-					OPTIMIZATION="${OPTIMIZATION} -march=native \
 						-mtune=native"
 					;;
 				arm*-gnueabi)
@@ -964,7 +982,7 @@ if test "x$HAVE_GCC" = "xyes" -o "x$HAVE_CLANG" = "xyes"; then
 
 	if test "x${HAVE_CLANG}" = "xyes"; then
 		case "${CLANG_VERSION}" in
-		3.[89]*|[45].*)
+		3.[[89]]*|[[45]].*|1[[0-9]].*)
 			OPTIMIZATION="-Ofast"
 			;;
 		*)
@@ -985,12 +1003,12 @@ if test "x$HAVE_GCC" = "xyes" -o "x$HAVE_CLANG" = "xyes"; then
 			OPTIMIZATION="${OPTIMIZATION} -march=i686 \
 				-mtune=native"
 			;;
-		*86)
-			OPTIMIZATION="${OPTIMIZATION} -march=native \
-				-mtune=native"
-			;;
 		esac
 
+		# if someone supplies own CFLAGS, we don't add our own
+		if test "x${ac_save_CFLAGS}" != "x"; then
+			OPTIMIZATION=""
+		fi
 	fi
 
 
@@ -1007,8 +1025,8 @@ fi
 
 AC_MSG_CHECKING(for debug options)
 AC_ARG_ENABLE(debug,
-  [  --enable-debug=alot,norm   Enable debugging (disables optimizations)]
-  [                           [default=no]],
+  [  --enable-debug=alot,norm Enable debugging (disables optimizations)]
+  [                         [default=no]],
     CONFIG_DEBUG="${enableval}", CONFIG_DEBUG="no")
 
 if test "x$GCC" = "xyes"; then
@@ -1215,6 +1233,7 @@ AC_SUBST(INCLUDES)
 AC_SUBST(FRONTEND_LDFLAGS)
 AC_SUBST(FRONTEND_CFLAGS)
 AC_SUBST(FRONTEND_LDADD)
+AC_SUBST(LIBMP3LAME_LDADD)
 AC_SUBST(CONFIG_MATH_LIB)
 AC_SUBST(LDADD)
 
@@ -1257,9 +1276,6 @@ AC_CONFIG_FILES([Makefile \
 		 ACM/tinyxml/Makefile \
 		 lame.spec \
 		 mac/Makefile \
-		 macosx/Makefile \
-		 macosx/English.lproj/Makefile \
-		 macosx/LAME.xcodeproj/Makefile \
 		 vc_solution/Makefile])
 
 AC_OUTPUT

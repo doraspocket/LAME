@@ -20,7 +20,7 @@
  * Boston, MA 02111-1307, USA.
  */
 
-/* $Id: parse.c,v 1.307 2017/09/26 12:25:07 robert Exp $ */
+/* $Id$ */
 
 #ifdef HAVE_CONFIG_H
 # include <config.h>
@@ -70,9 +70,47 @@ char   *strchr(), *strrchr();
 #ifdef HAVE_ICONV
 #include <iconv.h>
 #include <errno.h>
+#ifdef HAVE_LANGINFO_H
 #include <locale.h>
 #include <langinfo.h>
 #endif
+#if defined(__KLIBC__) && !defined(iconv_open)
+/* kLIBC iconv_open() does not support UTF-16LE and //TRANSLIT */
+static iconv_t os2_iconv_open (const char *tocode, const char *fromcode)
+{
+    char to[strlen(tocode) + 1];
+    char from[strlen(fromcode) + 1];
+    char *p;
+
+    strcpy(to, tocode);
+    strcpy(from, fromcode);
+
+    if (!strncmp(to, "UTF-16", 6))
+    {
+        strcpy(to, "UCS-2");
+        memmove(to + 5, to + 6, strlen(to + 6));
+    }
+
+    p = strstr(to, "//");
+    if (p)
+        *p = '\0';
+
+    if (!strncmp(from, "UTF-16", 6))
+    {
+        strcpy(from, "UCS-2");
+        memmove(from + 5, from + 6, strlen(from + 6));
+    }
+
+    p = strstr(from, "//");
+    if (p)
+        *p = '\0';
+
+    return iconv_open(to, from);
+}
+
+#define iconv_open(t, f) os2_iconv_open(t, f)
+#endif /* KLIBC iconv */
+#endif /* HAVE_ICONV */
 
 #if defined _ALLOW_INTERNAL_OPTIONS
 #define INTERNAL_OPTS 1
@@ -132,9 +170,9 @@ strlenMultiByte(char const* str, size_t w)
 {    
     size_t n = 0;
     if (str != 0) {
-        size_t i, x = 0;
+        size_t i;
         for (n = 0; ; ++n) {
-            x = 0;
+            size_t x = 0;
             for (i = 0; i < w; ++i) {
                 x += *str++ == 0 ? 1 : 0;
             }
@@ -146,6 +184,18 @@ strlenMultiByte(char const* str, size_t w)
     return n;
 }
 
+static char*
+currentCharacterEncoding()
+{
+#ifdef HAVE_LANGINFO_H
+    char* cur_code = nl_langinfo(CODESET);
+#else
+    char* env_lang = getenv("LANG");
+    char* xxx_code = env_lang == NULL ? NULL : strrchr(env_lang, '.');
+    char* cur_code = xxx_code == NULL ? "" : xxx_code+1;
+#endif
+    return cur_code;
+}
 
 static size_t
 currCharCodeSize(void)
@@ -153,7 +203,7 @@ currCharCodeSize(void)
     size_t n = 1;
     char dst[32];
     char* src = "A";
-    char* cur_code = nl_langinfo(CODESET);
+    char* cur_code = currentCharacterEncoding();
     iconv_t xiconv = iconv_open(cur_code, "ISO_8859-1");
     if (xiconv != (iconv_t)-1) {
         for (n = 0; n < 32; ++n) {
@@ -181,7 +231,7 @@ char* fromLatin1( char* src )
         size_t const n = l*4;
         dst = calloc(n+4, 4);
         if (dst != 0) {
-            char* cur_code = nl_langinfo(CODESET);
+            char* cur_code = currentCharacterEncoding();
             iconv_t xiconv = iconv_open(cur_code, "ISO_8859-1");
             if (xiconv != (iconv_t)-1) {
                 char* i_ptr = src;
@@ -205,7 +255,7 @@ char* fromUtf16( char* src )
         size_t const n = l*4;
         dst = calloc(n+4, 4);
         if (dst != 0) {
-            char* cur_code = nl_langinfo(CODESET);
+            char* cur_code = currentCharacterEncoding();
             iconv_t xiconv = iconv_open(cur_code, "UTF-16LE");
             if (xiconv != (iconv_t)-1) {
                 char* i_ptr = (char*)src;
@@ -231,7 +281,7 @@ char* toLatin1( char* src )
         size_t const n = l*4;
         dst = calloc(n+4, 4);
         if (dst != 0) {
-            char* cur_code = nl_langinfo(CODESET);
+            char* cur_code = currentCharacterEncoding();
             iconv_t xiconv = iconv_open("ISO_8859-1//TRANSLIT", cur_code);
             if (xiconv != (iconv_t)-1) {
                 char* i_ptr = (char*)src;
@@ -257,7 +307,7 @@ char* toUtf16( char* src )
         size_t const n = (l+1)*4;
         dst = calloc(n+4, 4);
         if (dst != 0) {
-            char* cur_code = nl_langinfo(CODESET);
+            char* cur_code = currentCharacterEncoding();
             iconv_t xiconv = iconv_open("UTF-16LE//TRANSLIT", cur_code);
             dst[0] = 0xff;
             dst[1] = 0xfe;
@@ -1411,7 +1461,6 @@ set_id3_albumart(lame_t gfp, char const* file_name)
 {
     int ret = -1;
     FILE *fpi = 0;
-    char *albumart = 0;
 
     if (file_name == 0) {
         return 0;
@@ -1422,6 +1471,7 @@ set_id3_albumart(lame_t gfp, char const* file_name)
     }
     else {
         size_t size;
+        char *albumart = 0;
 
         fseek(fpi, 0, SEEK_END);
         size = ftell(fpi);
@@ -1513,7 +1563,7 @@ parse_args_(lame_global_flags * gfp, int argc, char **argv,
     enum TextEncoding id3_tenc = TENC_LATIN1;
 #endif
 
-#ifdef HAVE_ICONV
+#ifdef HAVE_LANGINFO_H
     setlocale(LC_CTYPE, "");
 #endif
     inPath[0] = '\0';
@@ -1529,18 +1579,14 @@ parse_args_(lame_global_flags * gfp, int argc, char **argv,
 
     /* process args */
     for (i = 0; ++i < argc;) {
-        char    c;
         char   *token;
-        char   *arg;
-        char   *nextArg;
         int     argUsed;
         int     argIgnored=0;
 
         token = argv[i];
         if (*token++ == '-') {
+            char   *nextArg = i + 1 < argc ? argv[i + 1] : "";
             argUsed = 0;
-            nextArg = i + 1 < argc ? argv[i + 1] : "";
-
             if (!*token) { /* The user wants to use stdin and/or stdout. */
                 input_file = 1;
                 if (inPath[0] == '\0')
@@ -2208,10 +2254,11 @@ parse_args_(lame_global_flags * gfp, int argc, char **argv,
 
             }
             else {
+                char    c;
                 while ((c = *token++) != '\0') {
                     double double_value = 0;
                     int int_value = 0;
-                    arg = *token ? token : nextArg;
+                    char const *arg = *token ? token : nextArg;
                     switch (c) {
                     case 'm':
                         argUsed = 1;
@@ -2430,7 +2477,9 @@ parse_args_(lame_global_flags * gfp, int argc, char **argv,
                     error_printf
                         ("Error: 'nogap option'.  Calling program does not allow nogap option, or\n"
                          "you have exceeded maximum number of input files for the nogap option\n");
-                    *num_nogap = -1;
+                    if (num_nogap) {
+                        *num_nogap = -1;
+                    }
                     return -1;
                 }
             }
@@ -2509,7 +2558,7 @@ parse_args_(lame_global_flags * gfp, int argc, char **argv,
     if (global_reader.input_format == sf_unknown)
         global_reader.input_format = filename_to_type(inPath);
 
-#if !(defined HAVE_MPGLIB || defined AMIGA_MPEGA)
+#if !(defined HAVE_MPGLIB || defined AMIGA_MPEGA || HAVE_MPG123)
     if (is_mpeg_file_format(global_reader.input_format)) {
         error_printf("Error: libmp3lame not compiled with mpg123 *decoding* support \n");
         return -1;
